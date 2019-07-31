@@ -13,7 +13,7 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
-'<cpt_version>v1.3.6</cpt_version>
+'<cpt_version>v1.3.7</cpt_version>
 Option Explicit
 Private Const BLN_TRAP_ERRORS As Boolean = True
 'If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
@@ -37,16 +37,13 @@ End Sub
 
 Private Sub cmdUpgradeSelected_Click()
 'objects
-Dim arrCode As Object
+Dim rstCode As Object '<issue63>
 Dim cmCptThisProject As Object
 Dim cmThisProject As Object
 Dim Project As Object
 Dim vbComponent As Object
 Dim xmlHttpDoc As Object
 Dim oStream As Object 'ADODB.Stream
-Dim arrCurrent As Object
-Dim arrInstalled As Object
-Dim arrTypes As Object
 'strings
 Dim lngEvent As String
 Dim strVersion As String
@@ -64,12 +61,6 @@ Dim vEvent As Variant
 'dates
 
   If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
-
-  Set arrTypes = CreateObject("System.Collections.SortedList")
-  arrTypes.Add 1, ".bas"
-  arrTypes.Add 2, ".cls"
-  arrTypes.Add 3, ".frm"
-  arrTypes.Add 100, ".cls"
 
   For lngItem = 0 To Me.lboModules.ListCount - 1
 
@@ -89,8 +80,12 @@ Dim vEvent As Variant
       'get the repo directory
       'get the filename
       Set xmlHttpDoc = CreateObject("Microsoft.XMLHTTP")
-      strFileName = strModule & arrTypes.Item(CInt(cptUpgrades_frm.lboModules.List(lngItem, 5)))
-      strDirectory = cptUpgrades_frm.lboModules.List(lngItem, 1)
+      strFileName = cptUpgrades_frm.lboModules.List(lngItem, 5)
+      strFileName = strModule & Switch(strFileName = "1", ".bas", _
+                            strFileName = "2", ".cls", _
+                            strFileName = "3", ".frm", _
+                            strFileName = "100", ".cls")  '<issue63>
+      strDirectory = cptUpgrades_frm.lboModules.List(lngItem, 1) '<issue63>
 get_frx:
       strURL = strGitHub & strDirectory & "/" & strFileName
       xmlHttpDoc.Open "GET", strURL, False
@@ -174,10 +169,16 @@ next_module:     '</issue25>
     cmThisProject.InsertLines 1, "'" & strVersion
 
     'grab the imported code
-    Set arrCode = CreateObject("System.Collections.SortedList")
+    Set rstCode = New ADODB.Recordset '<issue63>
+    rstCode.Fields.Append "Event", 200, 120 '<issue63>
+    rstCode.Fields.Append "LOC", 203, 5000 '<issue63>
+    rstCode.Open '<issue63>
     With cmCptThisProject
       For Each vEvent In Array("Project_Activate", "Project_Open")
-        arrCode.Add CStr(vEvent), .Lines(.ProcStartLine(CStr(vEvent), 0) + 2, .ProcCountLines(CStr(vEvent), 0) - 3) '0 = vbext_pk_Proc
+        rstCode.AddNew '<issue63>
+        rstCode(0) = CStr(vEvent) '<issue63>
+        rstCode(1) = .Lines(.ProcStartLine(CStr(vEvent), 0) + 2, .ProcCountLines(CStr(vEvent), 0) - 3) '0 = vbext_pk_Proc '<issue63>
+        rstCode.Update '<issue63>
       Next vEvent
     End With
     ThisProject.VBProject.VBComponents.remove ThisProject.VBProject.VBComponents(cmCptThisProject.Parent.Name)
@@ -188,6 +189,10 @@ next_module:     '</issue25>
     'three cases: empty or not (code exists or not)
     For Each vEvent In Array("Project_Activate", "Project_Open")
 
+      'find the record
+      rstCode.MoveFirst '<issue63>
+      rstCode.Find "Event='" & CStr(vEvent) & "'", , 1 '<issue63>
+      
       'if event exists then insert code else create new event handler
       With cmThisProject
         If .CountOfLines > .CountOfDeclarationLines Then 'complications
@@ -195,8 +200,8 @@ next_module:     '</issue25>
           'find its line number
             lngEvent = .ProcBodyLine(CStr(vEvent), 0)  '= vbext_pk_Proc
             'import them if they *as a group* don't exist
-            If .Find(arrCode(CStr(vEvent)), .ProcStartLine(CStr(vEvent), 0), 1, .ProcCountLines(CStr(vEvent), 0), 1000) = False Then 'vbext_pk_Proc
-              .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+            If .Find(rstCode(1), .ProcStartLine(CStr(vEvent), 0), 1, .ProcCountLines(CStr(vEvent), 0), 1000) = False Then 'vbext_pk_Proc '<issue63>
+              .InsertLines lngEvent + 1, rstCode(1) '<issue63>
             Else
               'Debug.Print CStr(vEvent) & " code exists."
             End If
@@ -204,13 +209,13 @@ next_module:     '</issue25>
             'create it, returning its line number
             lngEvent = .CreateEventProc(Replace(CStr(vEvent), "Project_", ""), "Project")
             'insert cpt code after line number
-            .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+            .InsertLines lngEvent + 1, rstCode(1) '<issue63>
           End If
         Else 'easy
           'create it, returning its line number
           lngEvent = .CreateEventProc(Replace(CStr(vEvent), "Project_", ""), "Project")
           'insert cpt code after line number
-          .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+          .InsertLines lngEvent + 1, rstCode(1) '<issue63>
         End If 'lines exist
       End With 'thisproject.codemodule
 
@@ -234,17 +239,15 @@ next_module:     '</issue25>
 
 exit_here:
   On Error Resume Next
-  Set arrCode = Nothing
+  If rstCode.State Then rstCode.Close
+  Set rstCode = Nothing
   Set cmCptThisProject = Nothing
   Set cmThisProject = Nothing
   Application.ScreenUpdating = True
   Set Project = Nothing
   Set vbComponent = Nothing
   Application.StatusBar = ""
-  Set arrTypes = Nothing
   Set xmlHttpDoc = Nothing
-  Set arrCurrent = Nothing
-  Set arrInstalled = Nothing
   Set oStream = Nothing
   Exit Sub
 err_here:
