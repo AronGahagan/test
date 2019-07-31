@@ -244,7 +244,7 @@ Dim strAbout As String
 '  Set ctl = cptGetControl(frmAbout, "lblScoreboard") '<issue19>
 '  ctl.Visible = IIf(Now < #10/24/2019#, False, True) '<issue19>
   cptAbout_frm.lblScoreBoard.Visible = IIf(Now < #10/24/2019#, False, True) '<issue19>
-  cptAbout_frm.Show '<issue19>
+  cptAbout_frm.show '<issue19>
 '  frmAbout.Show '<issue19>
 
   '<issue19> added error handling
@@ -477,9 +477,8 @@ End Sub
 
 Sub ShowCptUpgrades_frm()
 'objects
-Dim arrDirectories As Object
+Dim rstStatus As ADODB.Recordset
 Dim vbComponent As Object
-Dim arrCurrent As Object, arrInstalled As Object
 Dim xmlDoc As Object
 Dim xmlNode As Object
 Dim FindRecord As Object
@@ -508,8 +507,13 @@ Dim vCol As Variant
   End If
 
   'get current versions
-  Set arrCurrent = CreateObject("System.Collections.SortedList")
-  Set arrDirectories = CreateObject("System.Collections.SortedList")
+  Set rstStatus = New ADODB.Recordset '<issue63>
+  rstStatus.Fields.Append "Name", 200, 200 '<issue63>
+  rstStatus.Fields.Append "Directory", 200, 200 '<issue63>
+  rstStatus.Fields.Append "Current", 200, 200 '<issue63>
+  rstStatus.Fields.Append "Installed", 200, 200 '<issue63>
+  rstStatus.Fields.Append "Status", 200, 200 '<issue63>
+  rstStatus.Open '<issue63>
   Set xmlDoc = CreateObject("MSXML2.DOMDocument.6.0")
   xmlDoc.async = False
   xmlDoc.validateOnParse = False
@@ -521,34 +525,39 @@ Dim vCol As Variant
     GoTo exit_here
   Else
     For Each xmlNode In xmlDoc.SelectNodes("/Modules/Module")
-      arrCurrent.Add xmlNode.SelectSingleNode("Name").Text, xmlNode.SelectSingleNode("Version").Text
-      'Debug.Print xmlNode.SelectSingleNode("Name").Text & " - " & xmlNode.SelectSingleNode("Directory").Text
-      arrDirectories.Add xmlNode.SelectSingleNode("Name").Text, xmlNode.SelectSingleNode("Directory").Text
+      rstStatus.AddNew '<issue63>
+      rstStatus(0) = xmlNode.SelectSingleNode("Name").Text '<issue63>
+      rstStatus(1) = xmlNode.SelectSingleNode("Directory").Text '<issue63>
+      rstStatus(2) = xmlNode.SelectSingleNode("Version").Text '<issue63>
+      rstStatus.Update '<issue63>
     Next
   End If
 
   'get installed versions
-  Set arrInstalled = CreateObject("System.Collections.SortedList")
   blnUpdatesAreAvailable = False
   For Each vbComponent In ThisProject.VBProject.VBComponents
     'is the vbComponent one of ours?
-    If vbComponent.CodeModule.Find("<cpt_version>", 1, 1, vbComponent.CodeModule.CountOfLines, 25) = True Then
+    If vbComponent.CodeModule.Find("'<cpt_version>", 1, 1, vbComponent.CodeModule.CountOfLines, 25) = True Then
       strVersion = cptRegEx(vbComponent.CodeModule.Lines(1, vbComponent.CodeModule.CountOfLines), "<cpt_version>.*</cpt_version>")
       strVersion = Replace(Replace(strVersion, "<cpt_version>", ""), "</cpt_version>", "")
-      arrInstalled.Add vbComponent.Name, strVersion
+      rstStatus.MoveFirst '<issue63>
+      rstStatus.Find "Name='" & vbComponent.Name & "'", , 1 '<issue63>
+      rstStatus(3) = strVersion '<issue63>
+      rstStatus(4) = cptVersionStatus(rstStatus(2), strVersion) '<issue63>
+      rstStatus.Update '<issue63>
     End If
   Next vbComponent
   Set vbComponent = Nothing
 
   '<issue31> if cptUpgrade_frm is updated, install it automatically
-  If arrInstalled.contains("cptUpgrades_frm") And arrCurrent.contains("cptUpgrades_frm") Then
-    If cptVersionStatus(arrInstalled("cptUpgrades_frm"), arrCurrent("cptUpgrades_frm")) <> "ok" Then
-      Call cptUpgrade(arrDirectories("cptUpgrades_frm") & "/cptUpgrades_frm.frm") 'uri slash
-      'update the version number in the array
-      arrInstalled.Item("cptUpgrades_frm") = arrCurrent("cptUpgrades_frm")
-    End If
-  End If '</issue31>
-
+  rstStatus.MoveFirst '<issue63>
+  rstStatus.Find "Name='cptUpgrades_frm'", , 1 '<issue63>
+  If cptVersionStatus(rstStatus(2), rstStatus(3)) <> "ok" Then '<issue63>
+    Call cptUpgrade(rstStatus(1) & "/cptUpgrades_frm.frm") '<issue63>
+    rstStatus(3) = rstStatus(2) '<issue63>
+    rstStatus.Update '<issue63>
+  End If '<issue63>
+  
   'populate the listbox header
   lngItem = 0
   cptUpgrades_frm.lboHeader.AddItem
@@ -560,47 +569,44 @@ Dim vCol As Variant
 
   'populate the listbox
   cptUpgrades_frm.lboModules.Clear
-  For lngItem = 0 To arrCurrent.count - 1
-    'If arrCurrent.getKey(lngItem) = "ThisProject" Then GoTo next_lngItem '</issue25'
-    strCurVer = arrCurrent.getValueList()(lngItem)
-    If arrInstalled.contains(arrCurrent.getKey(lngItem)) Then
-      strInstVer = arrInstalled.getValueList()(arrInstalled.indexofkey(arrCurrent.getKey(lngItem)))
+  rstStatus.MoveFirst '<issue63>
+  lngItem = 0 '<issue63>
+  Do While Not rstStatus.EOF '<issue63>
+    strCurVer = rstStatus(2) '<issue63>
+    If Not IsNull(rstStatus(3)) Then '<issue63>
+      strInstVer = rstStatus(3) '<issue63>
     Else
       strInstVer = "<not installed>"
     End If
     cptUpgrades_frm.lboModules.AddItem
-    cptUpgrades_frm.lboModules.List(lngItem, 0) = arrCurrent.getKey(lngItem) 'module name
-    cptUpgrades_frm.lboModules.List(lngItem, 1) = arrDirectories.getValueList()(lngItem) 'directory
-    cptUpgrades_frm.lboModules.List(lngItem, 2) = strCurVer 'arrCurrent.getValueList()(lngItem) 'current version
-    If arrInstalled.contains(arrCurrent.getKey(lngItem)) Then 'installed version
-      cptUpgrades_frm.lboModules.List(lngItem, 3) = strInstVer 'arrInstalled.getValueList()(arrInstalled.indexofkey(arrCurrent.getKey(lngItem)))
-    Else
-      cptUpgrades_frm.lboModules.List(lngItem, 3) = "<not installed>"
-    End If
-
-    Select Case strInstVer 'cptUpgrades_frm.lboModules.List(lngItem, 3)
-      Case Is = strCurVer 'cptUpgrades_frm.lboModules.List(lngItem, 2)
+    cptUpgrades_frm.lboModules.List(lngItem, 0) = rstStatus(0) '<issue63> 'module name
+    cptUpgrades_frm.lboModules.List(lngItem, 1) = rstStatus(1) '<issue63> 'directory
+    cptUpgrades_frm.lboModules.List(lngItem, 2) = strCurVer 'current version
+    cptUpgrades_frm.lboModules.List(lngItem, 3) = strInstVer '<issue63> 'installed version
+    Select Case strInstVer
+      Case Is = strCurVer
         cptUpgrades_frm.lboModules.List(lngItem, 4) = "< ok >"
       Case Is = "<not installed>"
         cptUpgrades_frm.lboModules.List(lngItem, 4) = "< install >"
-      Case Is <> strCurVer 'cptUpgrades_frm.lboModules.List(lngItem, 2)
+      Case Is <> strCurVer
         cptUpgrades_frm.lboModules.List(lngItem, 4) = "< " & cptVersionStatus(strInstVer, strCurVer) & " >"
     End Select
     'capture the type while we're at it - could have just pulled the FileName
     Set FindRecord = xmlDoc.SelectSingleNode("//Name[text()='" + cptUpgrades_frm.lboModules.List(lngItem, 0) + "']").ParentNode.SelectSingleNode("Type")
     cptUpgrades_frm.lboModules.List(lngItem, 5) = FindRecord.Text
 next_lngItem:
-  Next lngItem
+    lngItem = lngItem + 1 '<issue63>
+    rstStatus.MoveNext '<issue63>
+  Loop '<issue63>
 
-  cptUpgrades_frm.Show
+  cptUpgrades_frm.show
 
 exit_here:
   On Error Resume Next
+  If rstStatus.State Then rstStatus.Close
+  Set rstStatus = Nothing
   Application.StatusBar = ""
-  Set arrDirectories = Nothing
   Set vbComponent = Nothing
-  Set arrCurrent = Nothing
-  Set arrInstalled = Nothing
   Set xmlDoc = Nothing
   Set xmlNode = Nothing
   Set FindRecord = Nothing
