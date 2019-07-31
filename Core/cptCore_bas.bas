@@ -477,7 +477,7 @@ End Sub
 
 Sub ShowCptUpgrades_frm()
 'objects
-Dim rstStatus As ADODB.Recordset
+Dim rstStatus As Object 'ADODB.Recordset
 Dim vbComponent As Object
 Dim xmlDoc As Object
 Dim xmlNode As Object
