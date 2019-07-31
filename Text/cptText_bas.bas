@@ -1,5 +1,5 @@
 Attribute VB_Name = "cptText_bas"
-'<cpt_version>v1.2.3</cpt_version>
+'<cpt_version>v1.2.4</cpt_version>
 Option Explicit
 Private Const BLN_TRAP_ERRORS As Boolean = True
 'If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
@@ -147,7 +147,7 @@ End Sub
 Sub cptMyReplace()
 'fields affected: Marked, Task Name, Text Fields, Outline Code Fields
 'objects
-Dim arrReplaced As Object
+Dim rstReplaced As Object 'ADODB.Recordset '<issue63>
 Dim Tasks As Tasks, Task As Task
 'strings
 Dim strMsg As String
@@ -179,8 +179,10 @@ Dim vField As Variant, vFind As Variant, vReplace As Variant
   
   Application.OpenUndoTransaction "MyReplace"
 
-  Set arrReplaced = CreateObject("System.Collections.SortedList")
-
+  Set rstReplaced = New ADODB.Recordset '<issue63>
+  rstReplaced.Fields.Append "UID", adBigInt '<issue63>
+  rstReplaced.Open '<issue63>
+  
   For Each Task In Tasks
     If Task Is Nothing Then GoTo next_task
     If Task.ExternalTask Then GoTo next_task
@@ -189,7 +191,8 @@ Dim vField As Variant, vFind As Variant, vReplace As Variant
       If Len(cptRegEx(FieldConstantToFieldName(vField), "Text|Name")) > 0 Then
         If InStr(Task.GetField(vField), CStr(vFind)) > 0 Then
           Task.SetField vField, Replace(Task.GetField(vField), CStr(vFind), CStr(vReplace))
-          arrReplaced.Add Task.UniqueID, Task.UniqueID
+          rstReplaced.AddNew Array("UID"), Array(Task.UniqueID) '<issue63>
+          rstReplaced.Update '<issue63>
           lngFound = lngFound + 1
         End If
       End If
@@ -200,28 +203,32 @@ next_task:
   If lngFound = 0 Then
     MsgBox "No instances of '" & CStr(vFind) & "' found in selected cells.", vbExclamation + vbOKOnly, "MyReplace"
   Else
-    FilterEdit "cptMyReplace", True, True, True, False, , "Unique ID", , "equals", arrReplaced.getKey(0), "Or", True
-    For lngItem = 1 To arrReplaced.count - 1
-      FilterEdit "cptMyReplace", Taskfilter:=True, FieldName:="", NewFieldName:="Unique ID", test:="equals", Value:=arrReplaced.getKey(lngItem), operation:="Or", ShowInMenu:=True
-    Next lngItem
+    rstReplaced.MoveFirst '<issue63>
+    FilterEdit "cptMyReplace", True, True, True, False, , "Unique ID", , "equals", rstReplaced(0), "Or", True '<issue63>
+    Do While Not rstReplaced.EOF '<issue63>
+      FilterEdit "cptMyReplace", Taskfilter:=True, FieldName:="", NewFieldName:="Unique ID", test:="equals", Value:=rstReplaced(0), operation:="Or", ShowInMenu:=True '<issue63>
+      rstReplaced.MoveNext  '<issue63>
+    Loop  '<issue63>
     FilterApply "cptMyReplace", True
-    Application.Find "Unique ID", "equals", arrReplaced.getKey(0)
+    rstReplaced.MoveFirst '<issue63>
+    Application.Find "Unique ID", "equals", rstReplaced(0) '<issue63>
     cptSpeed False
     strMsg = "Replaced " & Format(lngFound, "#,##0") & " instance" & IIf(lngFound = 1, "", "s") & " of '" & CStr(vFind) & "' with '" & CStr(vReplace) & "'" & vbCrLf & vbCrLf
     strMsg = strMsg & "Keep highlighted?"
     If MsgBox(strMsg, vbQuestion + vbYesNo, "Replace") = vbNo Then
       cptSpeed True
       FilterApply "All Tasks", True
-      Application.Find "Unique ID", "equals", arrReplaced.getKey(0)
+      Application.Find "Unique ID", "equals", rstReplaced(0) '<issue63>
       cptSpeed False
     End If
   End If
   
 exit_here:
   On Error Resume Next
+  If rstReplaced.State Then rstReplaced.Close '<issue63>
+  Set rstReplaced = Nothing '<issue63>
   Application.CloseUndoTransaction
   cptSpeed False
-  Set arrReplaced = Nothing
   Set Tasks = Nothing
   Set Task = Nothing
   Exit Sub
@@ -371,7 +378,7 @@ Dim lngItem As Long
   End If
 
   Call cptStartEvents
-  cptText_frm.Show
+  cptText_frm.show
   
 exit_here:
   On Error Resume Next
