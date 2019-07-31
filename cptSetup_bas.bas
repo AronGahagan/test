@@ -21,16 +21,16 @@ Public Const strGitHub = "https://raw.githubusercontent.com/AronGahagan/cpt-dev/
 Sub cptSetup()
 'setup only needs to be run once
 'objects
+Dim rstCode As Object 'ADODB.Recordset '<issue63>
+Dim rstCore As Object 'ADODB.Recordset '<issue63>
 Dim Project As Object
 Dim vbComponent As Object 'vbComponent
-Dim arrCode As Object
 Dim cmThisProject As Object 'CodeModule
 Dim cmCptThisProject As Object 'CodeModule
 Dim oStream As Object 'ADODB.Stream
 Dim xmlHttpDoc As Object
 Dim xmlNode As Object
 Dim xmlDoc As Object
-Dim arrCore As Object
 'strings
 Dim strMsg As String
 Dim strError As String
@@ -42,7 +42,6 @@ Dim strURL As String
 'longs
 Dim lngLine As Long
 Dim lngEvent As Long
-'Dim lngFile As Long
 'integers
 'booleans
 Dim blnImportModule As Boolean
@@ -54,7 +53,7 @@ Dim vEvent As Variant
   If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
 
   '<issue61> ensure proper installation
-  If Instr(ThisProject.FullName, "Global.MPT") = 0 Then
+  If InStr(ThisProject.FullName, "Global.MPT") = 0 Then
     MsgBox "The VBA module 'cptSetup_bas' must be installed in your Global.MPT, not in this project file.", vbCritical + vbOKOnly, "Faulty Installation"
     GoTo exit_here
   End If '</issue61>
@@ -71,7 +70,10 @@ Dim vEvent As Variant
   If MsgBox(strMsg, vbQuestion + vbYesNo, "Before you proceed...") = vbNo Then GoTo exit_here
 
   'capture list of files to download
-  Set arrCore = CreateObject("System.Collections.SortedList")
+  Set rstCore = New ADODB.Recordset '<issue63>
+  rstCore.Fields.Append "FileName", 200, 120 '200 = adVarChar <issue63>
+  rstCore.Fields.Append "Type", 3, 3 '3 = adInteger <issue63>
+  rstCore.Open '<issue63>
   Application.StatusBar = "Identifying latest core CPT modules..."
   'get CurrentVersions.xml
   'get file list in cpt\Core
@@ -90,15 +92,13 @@ Dim vEvent As Variant
       strMsg = strMsg & "If the ClearPlan ribbon doesn't show up, please contact cpt@ClearPlanConsulting.com for assistance." '</issue35>
       MsgBox strMsg, vbExclamation + vbOKOnly, "XML Error" '</issue35>
     End If
-    'GoTo exit_here '</issue35> redirected
     GoTo this_project '</issue35> redirected
   Else
     'download cpt/core/*.* to user's tmp directory
-    arrCore.Clear
     For Each xmlNode In xmlDoc.SelectNodes("/Modules/Module")
       If xmlNode.SelectSingleNode("Directory").Text = "Core" Then
         Application.StatusBar = "Fetching " & xmlNode.SelectSingleNode("Name").Text & "..."
-        arrCore.Add xmlNode.SelectSingleNode("FileName").Text, xmlNode.SelectSingleNode("Type").Text
+        rstCore.AddNew Array("FileName", "Type"), Array(xmlNode.SelectSingleNode("FileName").Text, xmlNode.SelectSingleNode("Type").Text) '<issue63>
         'get ThisProject status for later
         If xmlNode.SelectSingleNode("FileName").Text = "ThisProject.cls" Then
           strVersion = xmlNode.SelectSingleNode("Version").Text
@@ -143,7 +143,6 @@ frx:
         For Each vbComponent In ThisProject.VBProject.VBComponents
           If vbComponent.Name = strModule Then
             Application.StatusBar = "Removing obsolete version of " & vbComponent.Name
-            'Debug.Print Application.StatusBar
             '<issue19> revised
             vbComponent.Name = vbComponent.Name & "_" & Format(Now, "hhnnss")
             DoEvents
@@ -156,7 +155,6 @@ frx:
         'import the module - skip ThisProject which needs special handling
         If strModule <> "ThisProject" Then
           Application.StatusBar = "Importing " & strFileName & "..."
-          'Debug.Print Application.StatusBar
           ThisProject.VBProject.VBComponents.import cptDir & "\" & strFileName
           '<issue19> added
           DoEvents '</issue19>
@@ -202,7 +200,6 @@ this_project:
   'avoid messy overwrites of ThisProject
   Set cmThisProject = ThisProject.VBProject.VBComponents("ThisProject").CodeModule
   '<issue10> revised
-  'If cmThisProject.Find("<cpt_version>", 1, 1, cmThisProject.CountOfLines, 1000, True, True) = True Then
   If cmThisProject.Find("<cpt_version>", 1, 1, cmThisProject.CountOfLines, 1000, False, True) = True Then
   '</issue10>
     strMsg = "Your 'ThisProject' module has already been updated to work with the ClearPlan toolbar." & vbCrLf & vbCrLf
@@ -225,10 +222,13 @@ this_project:
     strVersion = cptRegEx(ThisProject.VBProject.VBComponents("cptThisProject_cls").CodeModule.Lines(1, 1000), "<cpt_version>.*</cpt_version>")
     strVersion = Replace(Replace(strVersion, "<cpt_version>", ""), "</cpt_version>", "")
   End If '</issue35>
-  Set arrCode = CreateObject("System.Collections.SortedList")
+  Set rstCode = New ADODB.Recordset '<issue63>
+  rstCode.Fields.Append "Event", 200, 120 '200 = adVarChar <issue63>
+  rstCode.Fields.Append "LOC", 203, 5000 '203 = adLongVarWChar <issue63>
+  rstCode.Open
   With cmCptThisProject
     For Each vEvent In Array("Project_Activate", "Project_Open")
-      arrCode.Add CStr(vEvent), .Lines(.ProcStartLine(CStr(vEvent), 0) + 2, .ProcCountLines(CStr(vEvent), 0) - 3) '0 = vbext_pk_Proc
+      rstCode.AddNew Array("Event", "LOC"), Array(CStr(vEvent), .Lines(.ProcStartLine(CStr(vEvent), 0) + 2, .ProcCountLines(CStr(vEvent), 0) - 3)) '0 = vbext_pk_Proc <issue63>
     Next
   End With
   ThisProject.VBProject.VBComponents.remove ThisProject.VBProject.VBComponents(cmCptThisProject.Parent.Name)
@@ -239,6 +239,10 @@ this_project:
   'three cases: empty or not empty (code exists or not)
   For Each vEvent In Array("Project_Activate", "Project_Open")
 
+    'find the record '<issue63>
+    rstCode.MoveFirst '<issue63>
+    rstCode.Find "Event='" & CStr(vEvent) & "'", , 1 '1 = adSearchForward '<issue63>
+
     'if event exists then insert code else create new event handler
     With cmThisProject
       If .CountOfLines > .CountOfDeclarationLines Then 'complications
@@ -246,8 +250,8 @@ this_project:
         'find its line number
           lngEvent = .ProcBodyLine(CStr(vEvent), 0) '= vbext_pk_Proc
           'import them if they *as a group* don't exist
-          If .Find(arrCode(CStr(vEvent)), .ProcStartLine(CStr(vEvent), 0), 1, .ProcCountLines(CStr(vEvent), 0), 1000) = False Then 'vbext_pk_Proc
-            .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+          If .Find(rstCode(1), .ProcStartLine(CStr(vEvent), 0), 1, .ProcCountLines(CStr(vEvent), 0), 1000) = False Then 'vbext_pk_Proc <issue63>
+            .InsertLines lngEvent + 1, rstCode(1) '<issue63>
           Else
             'Debug.Print CStr(vEvent) & " code exists."
           End If
@@ -255,13 +259,13 @@ this_project:
           'create it, returning its line number
           lngEvent = .CreateEventProc(Replace(CStr(vEvent), "Project_", ""), "Project")
           'insert cpt code after line number
-          .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+          .InsertLines lngEvent + 1, rstCode(1) '<issue63>
         End If
       Else 'easy
         'create it, returning its line number
         lngEvent = .CreateEventProc(Replace(CStr(vEvent), "Project_", ""), "Project")
         'insert cpt code after line number
-        .InsertLines lngEvent + 1, arrCode(CStr(vEvent))
+        .InsertLines lngEvent + 1, rstCode(1) '<issue63>
       End If 'lines exist
     End With 'thisproject.codemodule
 
@@ -281,7 +285,6 @@ skip_import:
   If Len(strError) > 0 Then
     strError = "The following modules did not download correctly:" & vbCrLf & strError & vbCrLf & vbCrLf & "Please contact cpt@ClearPlanConsulting.com for assistance."
     MsgBox strError, vbCritical + vbOKOnly, "Unknown Error"
-    'Debug.Print strError
   End If
 
   'reset the toolbar
@@ -298,20 +301,22 @@ skip_import:
 
 exit_here:
   On Error Resume Next
+  rstCode.Close '<issue63>
+  Set rstCode = Nothing '<issue63>
+  rstCore.Close '<issue63>
+  Set rstCore = Nothing '<issue63>
   Set Project = Nothing
   '<issue19> added
   Application.StatusBar = "" '</issue19>
   '<issue23> added
   Application.ScreenUpdating = True '</issue23>
   Set vbComponent = Nothing
-  Set arrCode = Nothing
   Set cmThisProject = Nothing
   Set cmCptThisProject = Nothing
   Set oStream = Nothing
   Set xmlHttpDoc = Nothing
   Set xmlNode = Nothing
   Set xmlDoc = Nothing
-  Set arrCore = Nothing
   Exit Sub
 err_here:
   Call cptHandleErr("cptSetup_bas", "cptSetup", err, Erl)

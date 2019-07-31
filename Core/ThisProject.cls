@@ -32,7 +32,6 @@ Dim ribbonXML As String '</cpt>
   ribbonXML = ribbonXML + vbCrLf & "</mso:customUI>" '</cpt>
   '</cpt>
   'this actually adds the toolbar '</cpt>
-  'method only available in the Project_Activate event '</cpt>
   pj.SetCustomUI (ribbonXML)  '</cpt>
   '</cpt>
   'start monitoring for WindowSelectionChange events '</cpt>
