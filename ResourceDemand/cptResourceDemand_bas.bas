@@ -1,5 +1,5 @@
 Attribute VB_Name = "cptResourceDemand_bas"
-'<cpt_version>v1.1.7</cpt_version>
+'<cpt_version>v1.1.8</cpt_version>
 Option Explicit
 Private Const BLN_TRAP_ERRORS As Boolean = True
 'If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
@@ -390,9 +390,9 @@ End Sub
 
 Sub ShowFrmExportResourceDemand()
 'objects
-Dim arrResources As Object
+Dim rstFields As Object
+Dim rstResources As Object
 Dim objProject As Object
-Dim arrFields As Object
 'strings
 Dim strActiveView As String
 Dim strFieldName As String, strFileName As String
@@ -412,59 +412,63 @@ Dim vFieldType As Variant
     MsgBox "This feature requires MS Excel.", vbCritical + vbOKOnly, "Resource Demand"
     GoTo exit_here
   End If
-  If ActiveProject.Subprojects.count = 0 And ActiveProject.ResourceCount = 0 Then
-    MsgBox "This project has no resources to export.", vbExclamation + vbOKOnly, "No Resources"
-    GoTo exit_here
+  
+  '<issue63>
+  'ensure resources exist / get resource count
+  lngResourceCount = 0
+  If ActiveProject.Subprojects.count = 0 Then
+    lngResourceCount = ActiveProject.ResourceCount
   Else
     cptSpeed True
-    GoTo option_2 'delay is better than a flicker
-option_1:
-    strActiveView = ActiveWindow.TopPane.View.Name
-    ViewApply "Resource Sheet"
-    SelectAll
-    lngResourceCount = ActiveSelection.Resources.count
-    ViewApply strActiveView
-    cptSpeed False
-    If lngResourceCount = 0 Then
-      MsgBox "This project has no resources to export.", vbExclamation + vbOKOnly, "No Resources"
-      GoTo exit_here
-    End If
-option_2:
-    'option 2
-    lngResourceCount = ActiveProject.ResourceCount
-    Set arrResources = CreateObject("System.Collections.SortedList")
+    'get resource count for status/progress
+    Set rstResources = New ADODB.Recordset
+    rstResources.Fields.Append "Name", 200, 200
+    rstResources.Open
     For lngItem = 1 To ActiveProject.Subprojects.count
       Set objProject = ActiveProject.Subprojects(lngItem).SourceProject
       Application.StatusBar = "Loading " & objProject.Name & "..."
+      'ensure unique count [why? why do this?]
       For lngResource = 1 To objProject.Resources.count
-        With arrResources
-          If Not .contains(objProject.Resources(lngResource).Name) Then
-            .Add objProject.Resources(lngResource).Name, objProject.Resources(lngResource).Name
-            lngResourceCount = lngResourceCount + 1
-          End If
-        End With
+        If rstResources.RecordCount > 0 Then rstResources.MoveFirst
+        rstResources.Find "Name='" & objProject.Resources(lngResource).Name & "'", , 1
+        If rstResources.EOF Then 'add it
+          rstResources.AddNew "Name", objProject.Resources(lngResource).Name
+          rstResources.Update
+        End If
       Next lngResource
       Set objProject = Nothing
     Next lngItem
-    arrResources.Clear
     Application.StatusBar = ""
+    lngResourceCount = rstResources.RecordCount
+    rstResources.Close
     cptSpeed False
   End If
+  If lngResourceCount = 0 Then
+    MsgBox "This project has no resources to export.", vbExclamation + vbOKOnly, "No Resources"
+    GoTo exit_here
+  End If  '</issue63>
 
+  'prepare to populate the form
   cptResourceDemand_frm.lboFields.Clear
   cptResourceDemand_frm.lboExport.Clear
-
-  Set arrFields = CreateObject("System.Collections.SortedList")
-  'col0 = custom field name (sortfield)
-  'col1 = field constant
-
+  
+  'get custom fields
+  Set rstFields = New ADODB.Recordset
+  rstFields.Fields.Append "Constant", adBigInt, 50
+  rstFields.Fields.Append "Name", 200, 120
+  rstFields.Open
   For Each vFieldType In Array("Text", "Outline Code")
     On Error GoTo err_here
     For lngItem = 1 To 30
-      lngField = FieldNameToFieldConstant(vFieldType & lngItem) ',lngFieldType)
+      lngField = FieldNameToFieldConstant(vFieldType & lngItem)
       strFieldName = CustomFieldGetName(lngField)
       If Len(strFieldName) > 0 Then
-        If Not arrFields.contains(strFieldName) Then arrFields.Add strFieldName, lngField
+        If rstFields.RecordCount > 0 Then rstFields.MoveFirst
+        rstFields.Find "Name='" & strFieldName & "'", , 1
+        If rstFields.EOF Then
+          rstFields.AddNew Array("Constant", "Name"), Array(lngField, strFieldName)
+          rstFields.Update
+        End If
       End If
 next_field:
     Next lngItem
@@ -472,39 +476,34 @@ next_field:
 
   'get enterprise custom fields
   For lngField = 188776000 To 188778000
-    If Application.FieldConstantToFieldName(lngField) <> "<Unavailable>" Then
-      arrFields.Add Application.FieldConstantToFieldName(lngField), lngField
+    If FieldConstantToFieldName(lngField) <> "<Unavailable>" Then
+      strFieldName = FieldConstantToFieldName(lngField)
+      rstFields.AddNew Array("Constant", "Name"), Array(lngField, strFieldName)
+      rstFields.Update
     End If
   Next lngField
 
   'add fields to listbox
-  For lngItem = 0 To arrFields.count - 1
+  rstFields.Sort = "Name"
+  rstFields.MoveFirst
+  lngItem = 0
+  Do While Not rstFields.EOF
     cptResourceDemand_frm.lboFields.AddItem
-    'column 0 = field constant = arrFields col1
-    'column 1 = custom field name = arrFields col0
-    cptResourceDemand_frm.lboFields.List(lngItem, 0) = arrFields.getValueList()(lngItem) 'FieldNameToFieldConstant(arrFields.getKey(lngItem))
-    If FieldNameToFieldConstant(arrFields.getKey(lngItem)) >= 188776000 Then
-      cptResourceDemand_frm.lboFields.List(lngItem, 1) = arrFields.getKey(lngItem) & " (Enterprise)"
+    cptResourceDemand_frm.lboFields.List(lngItem, 0) = rstFields(0)
+    If rstFields(0) >= 188776000 Then
+      cptResourceDemand_frm.lboFields.List(lngItem, 1) = rstFields(1) & " (Enterprise)"
     Else
-      cptResourceDemand_frm.lboFields.List(lngItem, 1) = arrFields.getKey(lngItem) & " (" & FieldConstantToFieldName(arrFields.getValueList()(lngItem)) & ")"
+      cptResourceDemand_frm.lboFields.List(lngItem, 1) = rstFields(1) & " (" & FieldConstantToFieldName(rstFields(0)) & ")"
     End If
-  Next lngItem
+    lngItem = lngItem + 1
+    rstFields.MoveNext
+  Loop
 
   'save the fields to a file
   strFileName = Environ("tmp") & "\cpt-resource-demand-search.adtg"
   If Dir(strFileName) <> vbNullString Then Kill strFileName
-  With CreateObject("ADODB.Recordset")
-    .Fields.Append "Field Constant", adVarChar, 100
-    .Fields.Append "Custom Field Name", adVarChar, 100
-    .Open
-    For lngItem = 0 To arrFields.count - 1 'cptResourceDemand_frm.lboFields.ListCount - 1
-      'col0 = constant = arrFields col1
-      'col1 = field name = arrFields col0
-      .AddNew Array(0, 1), Array(arrFields.getValueList()(lngItem), arrFields.getKey(lngItem)) 'Array(cptResourceDemand_frm.lboFields.List(lngItem, 0), cptResourceDemand_frm.lboFields.List(lngItem, 1))
-    Next lngItem
-    .Save strFileName
-    .Close
-  End With
+  rstFields.Save strFileName
+  rstFields.Close
 
   'import saved fields if exists
   strFileName = Environ("tmp") & "\cpt-export-resource-userfields.adtg"
@@ -515,8 +514,8 @@ next_field:
       lngItem = 0
       Do While Not .EOF
         cptResourceDemand_frm.lboExport.AddItem
-        cptResourceDemand_frm.lboExport.List(lngItem, 0) = .Fields(0)     'Field Constant
-        cptResourceDemand_frm.lboExport.List(lngItem, 1) = .Fields(1)  'Custom Field Name
+        cptResourceDemand_frm.lboExport.List(lngItem, 0) = .Fields(0) 'Field Constant
+        cptResourceDemand_frm.lboExport.List(lngItem, 1) = .Fields(1) 'Custom Field Name
         lngItem = lngItem + 1
         .MoveNext
       Loop
@@ -524,13 +523,14 @@ next_field:
     End With
   End If
 
-  cptResourceDemand_frm.Show False
+  cptResourceDemand_frm.show False
 
 exit_here:
   On Error Resume Next
-  Set arrResources = Nothing
+  If rstFields.State Then rstFields.Close
+  Set rstFields = Nothing
+  Set rstResources = Nothing
   Set objProject = Nothing
-  Set arrFields = Nothing
   Exit Sub
 
 err_here:
@@ -538,7 +538,7 @@ err_here:
     err.Clear
     Resume next_field
   Else
-    Call cptHandleErr("cptResourceDemand_bas", "ShowCptResourceDemand_frm", err, Erl)
+    Call cptHandleErr("cptResourceDemand_bas", "ShowFrmExportResourceDemand", err, Erl)
     Resume exit_here
   End If
 

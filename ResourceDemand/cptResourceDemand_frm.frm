@@ -13,11 +13,10 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
-'<cpt_version>v1.0.5</cpt_version>
+'<cpt_version>v1.0.6</cpt_version>
 Option Explicit
 Private Const BLN_TRAP_ERRORS As Boolean = True
 'If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
-Private Const adVarChar As Long = 200
 
 Private Sub cmdAdd_Click()
 Dim lgField As Long, lgExport As Long, lgExists As Long
@@ -141,7 +140,7 @@ Dim lngItem As Long
   With CreateObject("ADODB.Recordset")
     .Open strFileName
     If Len(Me.stxtSearch.Text) > 0 Then
-      .Filter = "[Custom Field Name] LIKE '*" & cptRemoveIllegalCharacters(Me.stxtSearch.Text) & "*'"
+      .Filter = "[Name] LIKE '*" & cptRemoveIllegalCharacters(Me.stxtSearch.Text) & "*'"
     Else
       .Filter = 0
     End If
