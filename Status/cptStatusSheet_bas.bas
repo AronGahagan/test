@@ -8,14 +8,13 @@ Option Explicit
 #End If '<issue53>
 Private Const BLN_TRAP_ERRORS As Boolean = True
 'If BLN_TRAP_ERRORS Then On Error GoTo err_here Else On Error GoTo 0
-Private Const adVarChar As Long = 200
 
 Sub ShowCptStatusSheet_frm()
 'populate all outline codes, text, and number fields
 'populate UID,[user selections],Task Name,Duration,Forecast Start,Forecast Finish,Total Slack,[EVT],EV%,New EV%,BLW,Remaining Work,Revised ETC,BLS,BLF,Reason/Impact/Action
 'add pick list for EV% or default to Physical % Complete
 'objects
-Dim arrFields As Object, arrEVT As Object, arrEVP As Object
+Dim rstFields As Object 'ADODB.Recordset '<issue63>
 'longs
 Dim lngField As Long, lngItem As Long
 'integers
@@ -46,9 +45,12 @@ Dim vFieldType As Variant
     .cboCostTool.AddItem "<none>"
   End With
 
-  Set arrFields = CreateObject("System.Collections.SortedList")
-  Set arrEVT = CreateObject("System.Collections.SortedList")
-  Set arrEVP = CreateObject("System.Collections.SortedList")
+  Set rstFields = New ADODB.Recordset '<issue63>
+  rstFields.Fields.Append "Constant", 20 'adBigInt
+  rstFields.Fields.Append "Name", 200, 120 'adVarChar
+  rstFields.Fields.Append "EVT", 11 'adBoolean
+  rstFields.Fields.Append "EVP", 11 'adBoolean
+  rstFields.Open
 
   For Each vFieldType In Array("Text", "Outline Code", "Number")
     On Error GoTo err_here
@@ -56,14 +58,10 @@ Dim vFieldType As Variant
       lngField = FieldNameToFieldConstant(vFieldType & intField, pjTask)
       strFieldName = CustomFieldGetName(lngField)
       If Len(strFieldName) > 0 Then
-        arrFields.Add strFieldName, lngField
-        If vFieldType = "Text" Then
-          arrEVT.Add strFieldName, lngField
-          'todo: what if this is an enterprise field?
-        ElseIf vFieldType = "Number" Then
-          arrEVP.Add strFieldName, lngField
-          'todo: what if this is an enterprise field?
-        End If
+        rstFields.AddNew Array("Constant", "Name"), Array(lngField, strFieldName)
+        rstFields(2) = vFieldType = "Text"
+        rstFields(3) = vFieldType = "Number"
+        rstFields.Update
       End If
 next_field:
     Next intField
@@ -72,32 +70,45 @@ next_field:
   'get enterprise custom fields
   For lngField = 188776000 To 188778000 '2000 should do it for now
     If Application.FieldConstantToFieldName(lngField) <> "<Unavailable>" Then
-      arrFields.Add Application.FieldConstantToFieldName(lngField), lngField
+      rstFields.AddNew Array("Constant", "Name"), Array(lngField, FieldConstantToFieldName(lngField))
     End If
   Next lngField
 
   'add custom fields
-  'col0 = constant
-  'col1 = name
-  For intField = 0 To arrFields.count - 1
+  If rstFields.RecordCount > 0 Then rstFields.MoveFirst
+  rstFields.Sort = "Name"
+  lngField = 0
+  Do While Not rstFields.EOF
     cptStatusSheet_frm.lboFields.AddItem
-    cptStatusSheet_frm.lboFields.List(intField, 0) = arrFields.getByIndex(intField)
-    cptStatusSheet_frm.lboFields.List(intField, 1) = arrFields.getKey(intField)
-    If FieldNameToFieldConstant(arrFields.getKey(intField)) >= 188776000 Then
-      cptStatusSheet_frm.lboFields.List(intField, 2) = "Enterprise"
+    cptStatusSheet_frm.lboFields.List(lngField, 0) = rstFields(0)
+    cptStatusSheet_frm.lboFields.List(lngField, 1) = rstFields(1)
+    If FieldNameToFieldConstant(rstFields(1)) >= 188776000 Then
+      cptStatusSheet_frm.lboFields.List(lngField, 2) = "Enterprise"
     Else
-      cptStatusSheet_frm.lboFields.List(intField, 2) = FieldConstantToFieldName(arrFields.getByIndex(intField))
+      cptStatusSheet_frm.lboFields.List(lngField, 2) = FieldConstantToFieldName(rstFields(0))
     End If
-    cptStatusSheet_frm.cboEach.AddItem arrFields.getKey(intField)
-  Next
+    cptStatusSheet_frm.cboEach.AddItem rstFields(1) 'arrFields.getKey(intField)
+    rstFields.MoveNext
+    lngField = lngField + 1
+  Loop
   'add EVT values
-  For intField = 0 To arrEVT.count - 1
-    cptStatusSheet_frm.cboEVT.AddItem arrEVT.getKey(intField)
-  Next
+  rstFields.Filter = "EVT=1"
+  If rstFields.RecordCount > 0 Then rstFields.MoveNext
+  Do While Not rstFields.EOF
+    cptStatusSheet_frm.cboEVT.AddItem rstFields(1) 'arrEVT.getKey(intField)
+    rstFields.MoveNext
+  Loop
+
+  'clear filter
+  rstFields.Filter = 0
+
   'add EVP values
-  For intField = 0 To arrEVP.count - 1 'UBound(st)
-    cptStatusSheet_frm.cboEVP.AddItem arrEVP.getKey(intField) 'st(intField)(1)
-  Next
+  rstFields.Filter = "EVP=1"
+  If rstFields.RecordCount > 0 Then rstFields.MoveFirst
+  Do While Not rstFields.EOF
+    cptStatusSheet_frm.cboEVP.AddItem rstFields(1) 'arrEVP.getKey(intField) 'st(intField)(1)
+    rstFields.MoveNext
+  Loop
 
   'add saved settings if they exist
   strFileName = cptDir & "\settings\cpt-status-sheet.adtg"
@@ -154,13 +165,11 @@ next_field:
 
   dtStatus = CDate(cptStatusSheet_frm.txtStatusDate.Value)
   cptStatusSheet_frm.txtHideCompleteBefore.Value = DateAdd("d", -(Day(dtStatus) - 1), dtStatus)
-  cptStatusSheet_frm.Show False
+  cptStatusSheet_frm.show False
 
 exit_here:
   On Error Resume Next
-  Set arrFields = Nothing
-  Set arrEVT = Nothing
-  Set arrEVP = Nothing
+  Set rstFields = Nothing
   Exit Sub
 
 err_here:
